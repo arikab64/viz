@@ -5,6 +5,7 @@
 #include <bpf/libbpf_common.h>
 #include <linux/netfilter.h>
 #include <unistd.h>
+#include <stdarg.h>
 
 #define BPF_NF_VIZ_OBJ "nf_viz.bpf.o"
 #define BPF_PROGNAME "nf_viz"
@@ -29,9 +30,12 @@
     } while(0)
 
 static volatile bool exiting = false;
-
 static void handle_signal(int sig) {
     exiting = true;
+}
+
+static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va_list args) {
+    return vfprintf(stderr, format, args);
 }
 
 static struct bpf_link* attach_nf_hook(struct bpf_program *prog, 
@@ -61,18 +65,15 @@ int main(int argc, char *argv[]) {
     struct bpf_link *link_input = NULL, *link_output = NULL;
     int err = 0;
 
-    libbpf_set_print(NULL);
+    libbpf_set_print(libbpf_print_fn);
 
-    printf("Loading BPF program...\n");
+    printf("Loading BPF %s::%s program\n", BPF_NF_VIZ_OBJ, BPF_PROGNAME);
 
     obj = bpf_object__open_file(BPF_NF_VIZ_OBJ, NULL);
     if (libbpf_get_error(obj)) {
         fprintf(stderr, "Failed to open BPF object file: %s\n", BPF_NF_VIZ_OBJ);
         return 1;
     }
-
-    printf("BPF object file opened successfully\n");
-
     err = bpf_object__load(obj);
     if (err) {
         fprintf(stderr, "Failed to load BPF object: %d\n", err);
@@ -80,16 +81,12 @@ int main(int argc, char *argv[]) {
         goto cleanup;
     }
 
-    printf("BPF program loaded successfully\n");
-    
     prog = bpf_object__find_program_by_name(obj, "nf_viz");
     if (!prog) {
         fprintf(stderr, "Failed to find BPF program: %s\n", BPF_PROGNAME);
         err = RC_FIND_PROG_FAILED;
         goto cleanup;
     }
-
-    printf("BPF program found successfully\n");
 
     link_input = attach_nf_hook(prog, NF_INET_LOCAL_IN, "INPUT", NFPROTO_IPV4, -128);
     if (!link_input) {
